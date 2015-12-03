@@ -29,7 +29,7 @@ Image readImage(char *filename){
 	int i, j;
 
         //fp = fopen("./Images/sign_1.ppm", "rb+");
-	sprintf(filepath, "./Images/%s", filename);
+	sprintf(filepath, "./../Images/%s", filename);
 	printf("%s\n", filepath);
 
 	fp = fopen(filepath, "rb+");
@@ -106,7 +106,7 @@ void writeImage(char *filename, Image newimg){
 	int i, j;
 
 	//fp = fopen("./outImages/newsign_1.ppm", "wb+");
-	sprintf(filepath, "./outImages/out%s", filename);
+	sprintf(filepath, "./../outImages/out%s", filename);
 	fp = fopen(filepath, "wb+");
 
 	if(fp == NULL){	printf("File not open!\n"); return;	}
