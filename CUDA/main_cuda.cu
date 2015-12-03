@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include "image.c"
+#include "image.cu"
 #define N_THREADS 8
 #define N_BLOCKS 8
 
@@ -31,7 +31,7 @@ Image readImage(char *filename){
 	int i, j;
 
         //fp = fopen("./Images/sign_1.ppm", "rb+");
-	sprintf(filepath, "./Images/%s", filename);
+	sprintf(filepath, "./../Images/%s", filename);
 	printf("%s\n", filepath);
 
 	fp = fopen(filepath, "rb+");
@@ -99,272 +99,262 @@ int lenHelper(unsigned x) {
     return 1;
 }
 
-void writeImage(char *filename, Image newimg){
+void writeImage(char *filename, Image img, Pixel *newimg){
 	FILE *fp;
 	char eol = '\n';
 	char filepath[60];
 	char spc = ((char) 32);
 	char ita[5];
-	int i, j;
+	int i;
 
 	//fp = fopen("./outImages/newsign_1.ppm", "wb+");
-	sprintf(filepath, "./outImages/out%s", filename);
+	sprintf(filepath, "./../outImages/out%s", filename);
 	fp = fopen(filepath, "wb+");
 
 	if(fp == NULL){	printf("File not open!\n"); return;	}
 
 	printf("Start writing!\n");
 
-	fwrite(newimg.mnum, sizeof(char), 2, fp);
+	fwrite(img.mnum, sizeof(char), 2, fp);
 	fwrite(&eol, sizeof(char), 1, fp);
 
-	sprintf(ita, "%d", newimg.column);
-        fwrite(ita, sizeof(char), lenHelper(newimg.column), fp);
+	sprintf(ita, "%d", img.column);
+        fwrite(ita, sizeof(char), lenHelper(img.column), fp);
 	fwrite(&spc, sizeof(char), 1, fp);
 
-	sprintf(ita, "%d", newimg.line);
-	fwrite(ita, sizeof(char), lenHelper(newimg.line), fp);
+	sprintf(ita, "%d", img.line);
+	fwrite(ita, sizeof(char), lenHelper(img.line), fp);
 	fwrite(&eol, sizeof(char), 1, fp);
 
-	sprintf(ita, "%d", newimg.maxcolor);
-	fwrite(ita, sizeof(char), lenHelper(newimg.maxcolor), fp);
+	sprintf(ita, "%d", img.maxcolor);
+	fwrite(ita, sizeof(char), lenHelper(img.maxcolor), fp);
 	fwrite(&eol, sizeof(char), 1, fp);
 
-	if(newimg.mnum[0] == 'P' && newimg.mnum[1] == '6'){
-		for(i = 0; i < newimg.line; ++i){
-			for(j = 0; j < newimg.column; ++j){
-				fwrite(&newimg.pixel[i][j].R, sizeof(unsigned char), 1, fp);
-				fwrite(&newimg.pixel[i][j].G, sizeof(unsigned char), 1, fp);
-				fwrite(&newimg.pixel[i][j].B, sizeof(unsigned char), 1, fp);
-			}
+	printf("writting pixels!\n");
+
+	if(img.mnum[0] == 'P' && img.mnum[1] == '6'){
+		for(i = 0; i < img.line * img.column; ++i){
+				fwrite(&newimg[i].R, sizeof(unsigned char), 1, fp);
+				fwrite(&newimg[i].G, sizeof(unsigned char), 1, fp);
+				fwrite(&newimg[i].B, sizeof(unsigned char), 1, fp);
 		}
-	}else if(newimg.mnum[0] == 'P' && newimg.mnum[1] == '5'){
-		for(i = 0; i < newimg.line; ++i){
-                        for(j = 0; j < newimg.column; ++j){
-                                fwrite(&newimg.pixel[i][j].G, sizeof(unsigned char), 1, fp);
-                        }
+	}else if(img.mnum[0] == 'P' && img.mnum[1] == '5'){
+		for(i = 0; i < img.line; ++i){
+                                fwrite(&newimg[i].G, sizeof(unsigned char), 1, fp);
                 }
 	}
 
 	fclose(fp);
 
+	printf("Finished!\n");
+
 	return;
 }
 
-Image smoothInit(Image img){
-    Image newimg;
-    int i, j;
-    int num_threads = N_THREADS;
-    int num_blocks = N_BLOCKS;
-    
-    newimg.mnum[0] = img.mnum[0];
-	newimg.mnum[1] = img.mnum[1];
-	newimg.mnum[2] = img.mnum[3];
-	newimg.line = img.line;
-	newimg.column = img.column;
-	newimg.maxcolor = img.maxcolor;
+__global__ void smoothImage(int line, int column, Pixel *img, Pixel *newimg){
+	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+	int i_new = (i * column) + j;
 
-	newimg.pixel = (Pixel **) malloc(sizeof(Pixel) * newimg.line);
-	for(i = 0; i < newimg.line; ++i){	newimg.pixel[i] = (Pixel *) malloc(sizeof(Pixel) * newimg.column);	}
-    
-    smoothImage<<<num_block, num_thread>>>(img, &newimg);
-    
-    return newimg;
-}
-
-__global__ void smoothImage(Image img, Image *newimg){
-    int i, i_end, j, j_end, sl_thread, sc_thread;
-    int tid, bid;
-    sl_thread = img.line / n_procs;
-	sc_thread = img.column / N_THREADS;
-
-    bid = blockIdx.x;
-    tid = threadIdx.x;
-	if(bid == num_blocks - 1){	i_end = img.line;	}else{	i_end = sl_thread * (bid + 1);	}
-	if(tid == num_threads - 1){	j_end = img.column;	}else{	j_end = sc_thread * (tid + 1);	}
-    
-	for(i = sl_thread * bid; i < i_end; ++i){
-		for(j = sc_thread; j < j_end; ++j){
-			//Calcula o novo valor do Pixel[i][j] verificando se o pixel esta no canto para colocar como 0 os pixels fora da imagem
-			if(i == 0 && j == 0){
-				printf("\nCorner Exception[%d, %d]\n", i, j);
-				newimg->pixel[i][j].R = (0 + 0 + 0 +
-                                                        0 + img.pixel[i][j].R + img.pixel[i][j + 1].R +
-                                                        0 + img.pixel[i + 1][j].R + img.pixel[i + 1][j + 1].R)
-							/ 9;
+	//Calcula o novo valor do Pixel[i][j] verificando se o pixel esta no canto para colocar como 0 os pixels fora da imagem
+	if(i == 0 && j == 0){
+		newimg[i_new].R = (0 + 0 + 0 +
+                                   0 + img[i_new].R + img[i_new + 1].R +
+                                   0 + img[i_new + column].R + img[i_new + column + 1].R)
+				/ 9;
 				
-				newimg->pixel[i][j].G = (0 + 0 + 0 +
-                                                        0 + img.pixel[i][j].G + img.pixel[i][j + 1].G +
-                                                        0 + img.pixel[i + 1][j].G + img.pixel[i + 1][j + 1].G)
-							/ 9;
+		newimg[i_new].G = (0 + 0 + 0 +
+                                   0 + img[i_new].G + img[i_new + 1].G +
+                                   0 + img[i_new + column].G + img[i_new + column + 1].G)
+				/9;
 				
-				newimg->pixel[i][j].B = (0 + 0 + 0 +
-                                                        0 + img.pixel[i][j].B + img.pixel[i][j + 1].B +
-                                                        0 + img.pixel[i + 1][j].B + img.pixel[i + 1][j + 1].B)
-							/ 9;
-			}else if(i == 0 && j >= newimg->column - 1){
-                                printf("\nCorner Exception[%d, %d]\n", i, j);
-                                newimg->pixel[i][j].R = (0 + 0 + 0 +
-                                                        img.pixel[i][j - 1].R + img.pixel[i][j].R + 0 +
-                                                        img.pixel[i + 1][j - 1].R + img.pixel[i + 1][j].R + 0)
+		newimg[i_new].B = (0 + 0 + 0 +
+                		0 + img[i_new].B + img[i_new + 1].B +
+                		0 + img[i_new + column].B + img[i_new + column + 1].B)
+				/ 9;
+	}else if(i == 0 && j >= column - 1){
+                newimg[i_new].R = (0 + 0 + 0 +
+                                   img[i_new - 1].R + img[i_new].R + 0 +
+                                   img[i_new + column - 1].R + img[i_new + column].R + 0)
+                                   / 9;
+
+                                newimg[i_new].G = (0 + 0 + 0 +
+                                                        img[i_new - 1].G + img[i_new].G + 0 +
+                                                        img[i_new + column - 1].G + img[i_new + column].G + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].G = (0 + 0 + 0 +
-                                                        img.pixel[i][j - 1].G + img.pixel[i][j].G + 0 +
-                                                        img.pixel[i + 1][j - 1].G + img.pixel[i + 1][j].G + 0)
+                                newimg[i_new].B = (0 + 0 + 0 +
+                                                        img[i_new - 1].B + img[i_new].B + 0 +
+                                                        img[i_new + column - 1].B + img[i_new + column].B + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].B = (0 + 0 + 0 +
-                                                        img.pixel[i][j - 1].B + img.pixel[i][j].B + 0 +
-                                                        img.pixel[i + 1][j - 1].B + img.pixel[i + 1][j].B + 0)
-                                                        / 9;
-
-                        }else if(i >= newimg->line - 1 && j == 0){
-                                printf("\nCorner Exception[%d, %d]\n", i, j);
-                                newimg->pixel[i][j].R = (0 + img.pixel[i - 1][j].R + img.pixel[i - 1][j + 1].R +
-                                                        0 + img.pixel[i][j].R + img.pixel[i][j + 1].R +
+                        }else if(i >= line - 1 && j == 0){
+                                newimg[i_new].R = (0 + img[i_new - column].R + img[i_new - column + 1].R +
+                                                        0 + img[i_new].R + img[i_new + 1].R +
                                                         0 + 0 + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].G = (0 + img.pixel[i - 1][j].G + img.pixel[i - 1][j + 1].G +
-                                                        0 + img.pixel[i][j].G + img.pixel[i][j + 1].G +
+                                newimg[i_new].G = (0 + img[i_new - column].G + img[i_new - column + 1].G +
+                                                        0 + img[i_new].G + img[i_new + 1].G +
                                                         0 + 0 + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].B = (0 + img.pixel[i - 1][j].B + img.pixel[i - 1][j + 1].B +
-                                                        0 + img.pixel[i][j].B + img.pixel[i][j + 1].B +
-                                                        0 + 0 + 0)
-                                                        / 9;
-			}else if(i >= newimg->line - 1 && j >= newimg->column - 1){
-                                printf("\nCorner Exception[%d, %d]\n", i, j);
-                                newimg->pixel[i][j].R = (img.pixel[i - 1][j - 1].R + img.pixel[i - 1][j].R + 0 +
-                                                        img.pixel[i][j - 1].R + img.pixel[i][j].R + 0 +
+                                newimg[i_new].B = (0 + img[i_new - column].B + img[i_new - column + 1].B +
+                                                        0 + img[i_new].B + img[i_new + 1].B +
+                                                        img[i_new].G + img[i_new].G + 0 +
                                                         0 + 0 + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].G = (img.pixel[i - 1][j - 1].G + img.pixel[i - 1][j].G + 0 +
-                                                        img.pixel[i][j - 1].G + img.pixel[i][j].G + 0 +
-                                                        0 + 0 + 0)
-                                                        / 9;
-
-                                newimg->pixel[i][j].B = (img.pixel[i - 1][j - 1].B + img.pixel[i - 1][j].B + 0 +
-                                                        img.pixel[i][j - 1].B + img.pixel[i][j].B + 0 +
+                                newimg[i_new].B = (img[i_new - column - 1].B + img[i_new - column].B + 0 +
+                                                        img[i_new - 1].B + img[i_new].B + 0 +
                                                         0 + 0 + 0)
                                                         / 9;
                         }else if(i == 0){
-				newimg->pixel[i][j].R = (0 + 0 + 0 +
-                                                        img.pixel[i][j - 1].R + img.pixel[i][j].R + img.pixel[i][j + 1].R +
-                                                        img.pixel[i + 1][j - 1].R + img.pixel[i + 1][j].R + img.pixel[i + 1][j + 1].R)
+				newimg[i_new].R = (0 + 0 + 0 +
+                                                        img[i_new - 1].R + img[i_new].R + img[i_new + 1].R +
+                                                        img[i_new + column - 1].R + img[i_new + column].R + img[i_new + column + 1].R)
 							/ 9;
 
-                                newimg->pixel[i][j].G = (0 + 0 + 0 +
-                                                        img.pixel[i][j - 1].G + img.pixel[i][j].G + img.pixel[i][j + 1].G +
-                                                        img.pixel[i + 1][j - 1].G + img.pixel[i + 1][j].G + img.pixel[i + 1][j + 1].G)
-							/ 9;
+				newimg[i_new].G = (0 + 0 + 0 +
+                                                        img[i_new - 1].G + img[i_new].G + img[i_new + 1].G +
+                                                        img[i_new + column - 1].G + img[i_new + column].G + img[i_new + column + 1].G)
+                                                        / 9;
 
-                                newimg->pixel[i][j].B = (0 + 0 + 0 +
-                                                        img.pixel[i][j - 1].B + img.pixel[i][j].B + img.pixel[i][j + 1].B +
-                                                        img.pixel[i + 1][j - 1].B + img.pixel[i + 1][j].B + img.pixel[i + 1][j + 1].B)
-							/ 9;
+				
+				newimg[i_new].B = (0 + 0 + 0 +
+                                                        img[i_new - 1].B + img[i_new].B + img[i_new + 1].B +
+                                                        img[i_new + column - 1].B + img[i_new + column].B + img[i_new + column + 1].B)
+                                                        / 9;
+
 			}else if(j == 0){
-				newimg->pixel[i][j].R = (0 + img.pixel[i - 1][j].R + img.pixel[i - 1][j + 1].R+
-                                                        0 + img.pixel[i][j].R + img.pixel[i][j + 1].R +
-                                                        0 + img.pixel[i + 1][j].R + img.pixel[i + 1][j + 1].R)
+				newimg[i_new].R = (0 + img[i_new - column].R + img[i_new - column + 1].R+
+                                                        0 + img[i_new].R + img[i_new + 1].R +
+                                                        0 + img[i_new + column].R + img[i_new + column + 1].R)
 							/ 9;
+				
+				newimg[i_new].G = (0 + img[i_new - column].G + img[i_new - column + 1].G+
+                                                        0 + img[i_new].G + img[i_new + 1].G +
+                                                        0 + img[i_new + column].G + img[i_new + column + 1].G)
+                                                        / 9;
 
-                                newimg->pixel[i][j].G = (0 + img.pixel[i - 1][j].G + img.pixel[i - 1][j + 1].G+
-                                                        0 + img.pixel[i][j].G + img.pixel[i][j + 1].G +
-                                                        0 + img.pixel[i + 1][j].G + img.pixel[i + 1][j + 1].G)
-							/ 9;
-
-                                newimg->pixel[i][j].B = (0 + img.pixel[i - 1][j].B + img.pixel[i - 1][j + 1].B+
-                                                        0 + img.pixel[i][j].B + img.pixel[i][j + 1].B +
-                                                        0 + img.pixel[i + 1][j].B + img.pixel[i + 1][j + 1].B)
-							/ 9;
-	
-
-			}else if(i >= newimg->line - 1){
-				newimg->pixel[i][j].R = (img.pixel[i - 1][j - 1].R + img.pixel[i - 1][j].R + img.pixel[i - 1][j + 1].R+
-                                                        img.pixel[i][j - 1].R + img.pixel[i][j].R + img.pixel[i][j + 1].R +
+					
+				newimg[i_new].B = (0 + img[i_new - column].B + img[i_new - column + 1].B+
+                                                        0 + img[i_new].B + img[i_new + 1].B +
+                                                        0 + img[i_new + column].B + img[i_new + column + 1].B)
+                                                        / 9;
+			}else if(i >= line - 1){
+				newimg[i_new].R = (img[i_new - column - 1].R + img[i_new - column].R + img[i_new - column + 1].R+
+                                                        img[i_new - 1].R + img[i_new].R + img[i_new + 1].R +
                                                         0 + 0 + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].G = (img.pixel[i - 1][j - 1].G + img.pixel[i - 1][j].G + img.pixel[i - 1][j + 1].G+
-                                                        img.pixel[i][j - 1].G + img.pixel[i][j].G + img.pixel[i][j + 1].G +
+
+			newimg[i_new].G = (img[i_new - column - 1].G + img[i_new - column].G + img[i_new - column + 1].G+
+                                                        img[i_new - 1].G + img[i_new].G + img[i_new + 1].G +
                                                         0 + 0 + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].B = (img.pixel[i - 1][j - 1].B + img.pixel[i - 1][j].B + img.pixel[i - 1][j + 1].B+
-                                                        img.pixel[i][j - 1].B + img.pixel[i][j].B + img.pixel[i][j + 1].B +
+			newimg[i_new].B = (img[i_new - column - 1].B + img[i_new - column].B + img[i_new - column + 1].B+
+                                                        img[i_new - 1].B + img[i_new].B + img[i_new + 1].B +
                                                         0 + 0 + 0)
                                                         / 9;
-
-			}else if(j >= newimg->column - 1){
-				newimg->pixel[i][j].R = (img.pixel[i - 1][j - 1].R + img.pixel[i - 1][j].R + 0 +
-                                                        img.pixel[i][j - 1].R + img.pixel[i][j].R + 0 +
-                                                        img.pixel[i + 1][j - 1].R + img.pixel[i + 1][j].R + 0)
+			}else if(j >= column - 1){
+				newimg[i_new].R = (img[i_new - column - 1].R + img[i_new - column].R + 0 +
+                                                        img[i_new - 1].R + img[i_new].R + 0 +
+                                                        img[i_new + column - 1].R + img[i_new + column].R + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].G = (img.pixel[i - 1][j - 1].G + img.pixel[i - 1][j].G + 0 +
-                                                        img.pixel[i][j - 1].G + img.pixel[i][j].G + 0 +
-                                                        img.pixel[i + 1][j - 1].G + img.pixel[i + 1][j].G + 0)
+				newimg[i_new].G = (img[i_new - column - 1].G + img[i_new - column].G + 0 +
+                                                        img[i_new - 1].G + img[i_new].G + 0 +
+                                                        img[i_new + column - 1].G + img[i_new + column].G + 0)
                                                         / 9;
 
-                                newimg->pixel[i][j].B = (img.pixel[i - 1][j - 1].B + img.pixel[i - 1][j].B + 0 +
-                                                        img.pixel[i][j - 1].B + img.pixel[i][j].B + 0 +
-                                                        img.pixel[i + 1][j - 1].B + img.pixel[i + 1][j].B + 0)
+
+				newimg[i_new].B = (img[i_new - column - 1].B + img[i_new - column].B + 0 +
+                                                        img[i_new - 1].B + img[i_new].B + 0 +
+                                                        img[i_new + column - 1].B + img[i_new + column].B + 0)
                                                         / 9;
+
 			}else{
-				newimg->pixel[i][j].R = (img.pixel[i - 1][j - 1].R + img.pixel[i - 1][j].R + img.pixel[i - 1][j + 1].R+
-							img.pixel[i][j - 1].R + img.pixel[i][j].R + img.pixel[i][j + 1].R +
-							img.pixel[i + 1][j - 1].R + img.pixel[i + 1][j].R + img.pixel[i + 1][j + 1].R)
+				newimg[i_new].R = (img[i_new - column - 1].R + img[i_new - column].R + img[i_new - column + 1].R+
+							img[i_new - 1].R + img[i_new].R + img[i_new + 1].R +
+							img[i_new + column - 1].R + img[i_new + column].R + img[i_new + column + 1].R)
 							/ 9;
 
-				newimg->pixel[i][j].G = (img.pixel[i - 1][j - 1].G + img.pixel[i - 1][j].G + img.pixel[i - 1][j + 1].G+
-                                                        img.pixel[i][j - 1].G + img.pixel[i][j].G + img.pixel[i][j + 1].G +
-                                                        img.pixel[i + 1][j - 1].G + img.pixel[i + 1][j].G + img.pixel[i + 1][j + 1].G)
-							/ 9;
+				newimg[i_new].G = (img[i_new - column - 1].G + img[i_new - column].G + img[i_new - column + 1].G+
+                                                        img[i_new - 1].G + img[i_new].G + img[i_new + 1].G +
+                                                        img[i_new + column - 1].G + img[i_new + column].R + img[i_new + column + 1].G)
+                                                        / 9;
 
-				newimg->pixel[i][j].B = (img.pixel[i - 1][j - 1].B + img.pixel[i - 1][j].B + img.pixel[i - 1][j + 1].B+
-                                                        img.pixel[i][j - 1].B + img.pixel[i][j].B + img.pixel[i][j + 1].B +
-                                                        img.pixel[i + 1][j - 1].B + img.pixel[i + 1][j].B + img.pixel[i + 1][j + 1].B)
-							/ 9;
-			} 
-		}
+				newimg[i_new].B = (img[i_new - column - 1].B + img[i_new - column].B + img[i_new - column + 1].B+
+                                                        img[i_new - 1].B + img[i_new].B + img[i_new + 1].B +
+                                                        img[i_new + column - 1].B + img[i_new + column].B + img[i_new + column + 1].B)
+                                                        / 9;
+
 	}
 
-    __syncthreads();
-    
+	__syncthreads();
+
 	return;
 }
 
-int main(){
-	Image img, newimg;
-	char filename[60];
+Pixel *smoothInit(Image img){
+	Pixel *newimg, *retimg, *piximg, *sntimg;
 	int i, j;
 	clock_t start, end;
-	double cpu_time_used;
+        double cpu_time_used;
+
+	retimg = (Pixel *) malloc(sizeof(Pixel) * img.line * img.column);
+	piximg = (Pixel *) malloc(sizeof(Pixel) * img.line * img.column);
+	for(i = 0; i < img.line; ++i){
+		for(j = 0; j < img.column; ++j){
+			piximg[i * (img.column) + j] = img.pixel[i][j]; 
+		}
+	}
+	dim3 threadsPerBlock(8, 8);
+	dim3 numBlocks(img.column / threadsPerBlock.x, img.line / threadsPerBlock.y);
+
+	cudaMalloc((void **) &newimg, sizeof(Pixel) * img.line * img.column);
+	cudaMalloc((void **) &sntimg, sizeof(Pixel) * img.line * img.column);
+	cudaMemcpy(sntimg, piximg, sizeof(Pixel) * img.line * img.column, cudaMemcpyHostToDevice);
+
+	start = clock();
+	smoothImage<<<numBlocks, threadsPerBlock>>>(img.line, img.column, sntimg, newimg);
+	end = clock();
+
+	cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+
+	printf("\n-----------------------------------\nTook %f seconds to execute \n-----------------------------------\n", cpu_time_used);
+
+	cudaMemcpy(retimg, newimg, sizeof(Pixel) * img.line * img.column, cudaMemcpyDeviceToHost);
+
+	cudaFree(newimg);
+	cudaFree(sntimg);
+	free(piximg);
+
+	return retimg;
+}
+
+
+int main(){
+	Image img;
+	Pixel *newimg;
+	char filename[60];
+	int i;
 
 	scanf("%s", filename);
 	printf("%s\n", filename);
 
 	img = readImage(filename);
 
-	start = clock();
-	newimg = smoothImage(img);
-	end = clock();
+	newimg = smoothInit(img);
 
-	writeImage(filename, newimg);
+	writeImage(filename, img, newimg);
 
 	for(i = 0; i < img.line; ++i){	free(img.pixel[i]);	}
 	free(img.pixel);
 
-	for(i = 0; i < newimg.line; ++i){  free(newimg.pixel[i]);     }
-        free(newimg.pixel);
-
-	cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-
-	printf("\n-----------------------------------\nTook %f seconds to execute \n-----------------------------------\n", cpu_time_used);
+        free(newimg);
 
 	return 0;
 }
