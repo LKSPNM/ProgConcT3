@@ -6,6 +6,7 @@
 #define N_THREADS 8
 #define N_BLOCKS 8
 
+//Le o tamanho um numero em char e o converte para inteiro
 int readCharNum(char stop, FILE *fp){
 	char *size = (char *) calloc(sizeof(char), 1);
         int i = 0;
@@ -22,6 +23,7 @@ int readCharNum(char stop, FILE *fp){
 	return num;
 }
 
+//Leitura da imagem
 Image readImage(char *filename){
 	Image img;
         FILE *fp = NULL;
@@ -86,6 +88,7 @@ Image readImage(char *filename){
 	return img;
 }
 
+//Retorna o tamanho de um numero, quantidade de casas
 int lenHelper(unsigned x) {
     if(x>=1000000000) return 10;
     if(x>=100000000) return 9;
@@ -99,6 +102,7 @@ int lenHelper(unsigned x) {
     return 1;
 }
 
+//Escreve imagem
 void writeImage(char *filename, Image img, Pixel *newimg){
 	FILE *fp;
 	char eol = '\n';
@@ -152,8 +156,11 @@ void writeImage(char *filename, Image img, Pixel *newimg){
 }
 
 __global__ void smoothImage(int line, int column, Pixel *img, Pixel *newimg){
+	//Calcula i e j de acordo com o bloco e a thread em que esta
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+	
+	//transforma as coordenadas i e j em cordenada i_new para o vetor
 	int i_new = (i * column) + j;
 
 	//Calcula o novo valor do Pixel[i][j] verificando se o pixel esta no canto para colocar como 0 os pixels fora da imagem
@@ -298,13 +305,16 @@ __global__ void smoothImage(int line, int column, Pixel *img, Pixel *newimg){
 	return;
 }
 
+//Host que passa a matriz de pixel para vetor e chama os kernels
 Pixel *smoothInit(Image img){
 	Pixel *newimg, *retimg, *piximg, *sntimg;
 	int i, j;
 	clock_t start, end;
         double cpu_time_used;
 
+	//Imagem de retorno
 	retimg = (Pixel *) malloc(sizeof(Pixel) * img.line * img.column);
+	//Buffer do vetor de pixels
 	piximg = (Pixel *) malloc(sizeof(Pixel) * img.line * img.column);
 	for(i = 0; i < img.line; ++i){
 		for(j = 0; j < img.column; ++j){
@@ -314,11 +324,15 @@ Pixel *smoothInit(Image img){
 	dim3 threadsPerBlock(8, 8);
 	dim3 numBlocks(img.column / threadsPerBlock.x, img.line / threadsPerBlock.y);
 
+	//Imagem nova que os kernels alterarao
 	cudaMalloc((void **) &newimg, sizeof(Pixel) * img.line * img.column);
+	//Imagem original enviada para os kernels
 	cudaMalloc((void **) &sntimg, sizeof(Pixel) * img.line * img.column);
+	//Copia os dados do vetor de buffer para o vetor que sera enviado paras os kernels
 	cudaMemcpy(sntimg, piximg, sizeof(Pixel) * img.line * img.column, cudaMemcpyHostToDevice);
 
 	start = clock();
+	//Chama kernels
 	smoothImage<<<numBlocks, threadsPerBlock>>>(img.line, img.column, sntimg, newimg);
 	end = clock();
 
@@ -326,6 +340,7 @@ Pixel *smoothInit(Image img){
 
 	printf("\n-----------------------------------\nTook %f seconds to execute \n-----------------------------------\n", cpu_time_used);
 
+	//copia imagem nova para o vetor de retorno
 	cudaMemcpy(retimg, newimg, sizeof(Pixel) * img.line * img.column, cudaMemcpyDeviceToHost);
 
 	cudaFree(newimg);
